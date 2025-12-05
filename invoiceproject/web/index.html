@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice QC Console</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #eee;
+        }
+
+        .valid {
+            color: green;
+        }
+
+        .invalid {
+            color: red;
+        }
+
+        .error {
+            color: red;
+            font-size: 0.9em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgb(0, 0, 0);
+            background-color: rgba(0, 0, 0, 0.4);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-height: 70vh;
+            overflow-y: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .close:hover,
+        .close:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Invoice QC Console</h1>
+
+    <div class="container">
+        <h2>Upload PDFs for Validation</h2>
+        <input type="file" id="pdfInput" multiple accept=".pdf">
+        <button onclick="uploadFiles()">Validate</button>
+    </div>
+
+    <div id="summary" style="margin-top: 20px;"></div>
+
+    <table id="resultsTable" style="display:none;">
+        <thead>
+            <tr>
+                <th>Invoice ID</th>
+                <th>Status</th>
+                <th>Errors</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+    </table>
+
+    <!-- The Modal -->
+    <div id="dataModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h3 id="modalTitle">Data</h3>
+            <pre id="modalText"></pre>
+        </div>
+    </div>
+
+    <script>
+        // Modal functions
+        function openModal(title, text) {
+            document.getElementById('modalTitle').innerText = title;
+            document.getElementById('modalText').innerText = text;
+            document.getElementById('dataModal').style.display = "block";
+        }
+
+        function closeModal() {
+            document.getElementById('dataModal').style.display = "none";
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function (event) {
+            if (event.target == document.getElementById('dataModal')) {
+                closeModal();
+            }
+        }
+
+        async function uploadFiles() {
+            const input = document.getElementById('pdfInput');
+            if (input.files.length === 0) {
+                alert("Please select files first.");
+                return;
+            }
+
+            const formData = new FormData();
+            for (const file of input.files) {
+                formData.append('files', file);
+            }
+
+            try {
+                const response = await fetch('/extract-and-validate-pdfs', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayResults(data);
+            } catch (e) {
+                console.error("Upload error:", e);
+                alert("Error: " + e.message);
+            }
+        }
+
+        function displayResults(data) {
+            const summaryDiv = document.getElementById('summary');
+            const summary = data.summary;
+            summaryDiv.innerHTML = `
+                <h3>Summary</h3>
+                <p>Total: ${summary.total_invoices} | Valid: ${summary.valid_invoices} | Invalid: ${summary.invalid_invoices}</p>
+            `;
+
+            const tbody = document.getElementById('resultsBody');
+            tbody.innerHTML = '';
+
+            data.results.forEach(res => {
+                const tr = document.createElement('tr');
+                const statusClass = res.is_valid ? 'valid' : 'invalid';
+                const statusText = res.is_valid ? 'VALID' : 'INVALID';
+
+                const errorsHtml = res.errors.map(e => `<div class="error">${e}</div>`).join('');
+                const warningsHtml = res.warnings.map(w => `<div class="warning" style="color:orange">${w}</div>`).join('');
+
+                // Get raw text and full data
+                const extractedData = (data.extracted_data && data.extracted_data[data.results.indexOf(res)]) ? data.extracted_data[data.results.indexOf(res)] : null;
+                const rawText = extractedData ? extractedData.raw_text : "No text available";
+
+                // Store data in a safe way to pass to function (using index or just passing global map? simplified here using closure/string for simplicity as it is small app)
+                // Better: attach data to the row or button
+
+                const rawTextEscaped = (rawText || '').replace(/`/g, '\\`').replace(/"/g, '&quot;');
+                const jsonDataEscaped = JSON.stringify(extractedData || {}, null, 2).replace(/`/g, '\\`').replace(/"/g, '&quot;');
+
+                // We'll use a globally accessible array or just simple onclicks with careful escaping. 
+                // Since escaping HTML in onclick is tricky, let's just use data attributes.
+
+                tr.innerHTML = `
+                    <td>${res.invoice_id || 'N/A'}</td>
+                    <td class="${statusClass}"><strong>${statusText}</strong></td>
+                    <td>${errorsHtml}${warningsHtml}</td>
+                    <td>
+                        <div style="display:flex; gap:10px;">
+                            <button class="btn-view-raw">View Raw Text</button>
+                            <button class="btn-view-json">View Extracted Data</button>
+                        </div>
+                    </td>
+                `;
+
+                // Add event listeners locally to avoid escaping hell
+                const btnRaw = tr.querySelector('.btn-view-raw');
+                btnRaw.onclick = () => openModal('Raw Text', rawText);
+
+                const btnJson = tr.querySelector('.btn-view-json');
+                btnJson.onclick = () => openModal('Extracted Data', JSON.stringify(extractedData, null, 2));
+
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('resultsTable').style.display = 'table';
+        }
+    </script>
+</body>
+
+</html>
